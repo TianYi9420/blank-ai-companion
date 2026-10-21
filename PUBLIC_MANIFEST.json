@@ -83,8 +83,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "099f0bbdf3b068fece02a9bc8fbae9e0593351f651ab52f90df2034d017cb9dc",
-      "bytes": 12969
+      "sha256": "11519eb27e77b56630d498883516da1cb13e4924b76d1b79b3c75e0f53a42183",
+      "bytes": 13589
     },
     {
       "path": "requirements.txt",
@@ -137,10 +137,10 @@
       "bytes": 3634
     },
     {
-      "path": ".github/workflows/offline-tests.yml",
+      "path": "ci-workflow.example.yml",
       "sha256": "d31113219be3e10b2bdc4c51d301cb34e60123361ae8ad5835cd82819666ba70",
       "bytes": 657
     }
   ],
-  "note": "Explicit public allowlist. Manifest excludes itself. Workflow upload subject to GitHub permission; verify remote tree."
+  "note": "Explicit public allowlist. Manifest excludes itself. CI workflow is an inactive example because current authorization cannot write workflows."
 }

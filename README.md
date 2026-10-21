@@ -190,6 +190,12 @@ if (-not (Test-Path persona.json)) { Copy-Item persona.example.json persona.json
 
 WorkBuddy專用舊入口 [交接給WorkBuddy.md](交接給WorkBuddy.md) 保留相容，但不是必要步驟。各Agent規則載入方式隨產品／版本不同，本專案不自動替你安裝或授權它們。
 
+## 自動測試（可選）
+
+倉庫提供 `ci-workflow.example.yml`，可在 GitHub 網頁新增為 `.github/workflows/offline-tests.yml`，或以具工作流寫入權限的憑證提交。配置會在 Windows 測 Python 3.10／3.13，僅安裝依賴、執行離線測試與空白啟動檢查，不使用Discord／模型秘密。
+
+**初始發布因授權未含工作流寫入權限，尚未啟用 GitHub Actions，也未取得CI通過結果。** 本地離線測試已執行，不等同此矩陣已實測。新增工作流後檢查Actions結果，再聲稱CI通過；勿為此公開Token或給程式額外帳號權限。
+
 ## 隱私、測試與授權
 
 - 本機 `config.json`、`persona.json`、`anchors/`、記憶、照片、日誌、狀態與OAuth已排除版控；`.gitignore`不是安全沙箱，不要 `git add -f` 或公開已使用整目錄。
