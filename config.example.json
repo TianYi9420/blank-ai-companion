@@ -1,0 +1,58 @@
+﻿{
+  "discord": {
+    "bot_token": "",
+    "owner_user_id": "",
+    "allowed_channels": []
+  },
+  "llm": {
+    "enabled": false,
+    "endpoint": "",
+    "api_token": "",
+    "model": "",
+    "vision_model": "",
+    "timeout_seconds": 90,
+    "max_tokens": 2000
+  },
+  "imagegen": {
+    "enabled": false,
+    "provider": "openai_images",
+    "endpoint": "",
+    "api_key": "",
+    "model": "",
+    "anchor": "",
+    "manga_anchor": "",
+    "persona_group": "",
+    "manga_style": "",
+    "quality": "medium",
+    "size": "1024x1024",
+    "others_per_hour": 5,
+    "others_per_day": 60,
+    "chance": 0,
+    "proactive_selfie_per_hour": 1,
+    "proactive_selfie_per_day": 3,
+    "scenes": []
+  },
+  "proactive": {
+    "enabled": false
+  },
+  "quiet_hours": [
+    [
+      0,
+      0
+    ],
+    [
+      8,
+      0
+    ]
+  ],
+  "daily_limit": 4,
+  "min_interval_minutes": 150,
+  "max_interval_minutes": 360,
+  "awareness": {
+    "enabled": false
+  },
+  "memory_sources": "off",
+  "sources": {},
+  "research": {"enabled": false, "bilibili_enabled": false, "provider": "bing_rss"},
+  "discord_webhook_url": ""
+}

@@ -1,0 +1,146 @@
+﻿{
+  "release": "0.1.0",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "a351aa9f84dce0cf22dc7f3194bdbffee617e6ef56e795a8d3740686bd55ec68",
+      "bytes": 267
+    },
+    {
+      "path": "交接給WorkBuddy.md",
+      "sha256": "14e8eba2f8cb06846de3e2b91451a33cc5f58e0f87aba06ca02c3fde8cd0c422",
+      "bytes": 8585
+    },
+    {
+      "path": "bili_search.py",
+      "sha256": "a7b09aa62889b19ed419fd5eabb7904455dc0ab5c1450c84dc3bf7dbd840c2e5",
+      "bytes": 17131
+    },
+    {
+      "path": "check_config.py",
+      "sha256": "528bfa48a19008953fb872b62adc3481d3f3fba50e48a4ebd97735f203f0418e",
+      "bytes": 2993
+    },
+    {
+      "path": "companion.py",
+      "sha256": "1ade40ece9f04472147f5543299bd6186df0116bdb028abf5541d20ce0e519dd",
+      "bytes": 3579
+    },
+    {
+      "path": "composer.py",
+      "sha256": "b1e06f39d454a943444f1403bca444802bd9280bc13458c81542ed546cb833dd",
+      "bytes": 194
+    },
+    {
+      "path": "config.example.json",
+      "sha256": "663241c56d800785c3219898f8f2d0982a66bb6efa8760e0c352d76d72029ac8",
+      "bytes": 1107
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "9ed27ba08a3946c23d460ed0a72bf1c2c6cb1a6822c4087636b924227093e567",
+      "bytes": 906
+    },
+    {
+      "path": "discord_bot.py",
+      "sha256": "74d8f8230dc1f3858175d54ab4896dde29cb087904e769f0e07672311536862e",
+      "bytes": 30792
+    },
+    {
+      "path": "imagegen.py",
+      "sha256": "89abbee03e120e46be8449e7ae63f9ee0de36dedb434511ca9d7e481db89718d",
+      "bytes": 15403
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "73fe44b5cde983063195a9aa15fd4ffdba6545d77c4d2e82ac59803d6e99ef8f",
+      "bytes": 1070
+    },
+    {
+      "path": "llm.py",
+      "sha256": "02ca4f92859f854d211ecf122125350db46d8a7e8e8c951a0451f3e2d3b50bd9",
+      "bytes": 22366
+    },
+    {
+      "path": "memory.py",
+      "sha256": "9c2977153868ea8e5ac6e7753fd4b08eec702128c9db7154096f199e41bd3ba3",
+      "bytes": 6341
+    },
+    {
+      "path": "persona.example.json",
+      "sha256": "23ed64b508d4dd7bce80248f6064e49b9bc2be6a1a5f55758241cf035dda83b2",
+      "bytes": 141
+    },
+    {
+      "path": "PRIVACY.md",
+      "sha256": "cdf661b2f0badfa465f7464745a1f3dd7f7f189063e0c5e275541e5d3c0803bf",
+      "bytes": 2040
+    },
+    {
+      "path": "proactive.py",
+      "sha256": "6c81bfc0f9a7bba65fac33d83c65b0d24ec5e1093e8aa242df6b845f11c000af",
+      "bytes": 2264
+    },
+    {
+      "path": "README.md",
+      "sha256": "099f0bbdf3b068fece02a9bc8fbae9e0593351f651ab52f90df2034d017cb9dc",
+      "bytes": 12969
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "9be5b5ad53a99231d7430b17b195c95f4c3e9ee7ec13e56ded30ea8253654c9a",
+      "bytes": 50
+    },
+    {
+      "path": "research.py",
+      "sha256": "45946edf4b860e0fef72dd8e3f17ae34e6ccd4f0cc59650996d238de4601ae71",
+      "bytes": 31683
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "b51e21ffa1076154220db2dd63d31d76cbecdf67463bb3278203c872cdfc6efc",
+      "bytes": 763
+    },
+    {
+      "path": "setup.bat",
+      "sha256": "ab161a06db70698e4c5ecc68e760e367e8e844d9a93b8666e4338b9d743ee965",
+      "bytes": 542
+    },
+    {
+      "path": "sources.py",
+      "sha256": "8b25b00ee39370ad2e2861b94112abce945d21a2de61e276bf04cd0ccb08eda1",
+      "bytes": 495
+    },
+    {
+      "path": "start.bat",
+      "sha256": "089a7abf477bc130a1e4ade74bb93db9dd741625c11ae783e2932668df6d68e2",
+      "bytes": 288
+    },
+    {
+      "path": "test_blank.py",
+      "sha256": "ab6b846deafed79078785014a72de7ff62970134299aa177938cfb7da563b5e8",
+      "bytes": 11651
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "1bd149ac8062036cccf309544d3e9d6c58cb7debea9e7e22ce6372f613b90030",
+      "bytes": 599
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "285f3c082dd8266d37eba57de84efbffd5f90693f2e966d7a85e1fc753fb6828",
+      "bytes": 2775
+    },
+    {
+      "path": "HANDOFF.md",
+      "sha256": "9f24be3a3f345e9b65c0525d39794bf1f818edc351e2887c658adaa15b0ce296",
+      "bytes": 3634
+    },
+    {
+      "path": ".github/workflows/offline-tests.yml",
+      "sha256": "d31113219be3e10b2bdc4c51d301cb34e60123361ae8ad5835cd82819666ba70",
+      "bytes": 657
+    }
+  ],
+  "note": "Explicit public allowlist. Manifest excludes itself. Workflow upload subject to GitHub permission; verify remote tree."
+}
