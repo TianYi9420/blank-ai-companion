@@ -178,10 +178,10 @@ if (-not (Test-Path persona.json)) { Copy-Item persona.example.json persona.json
 ### 主動陪伴與主動自拍
 
 - `proactive.enabled=true` 才啟動背景輪詢；每15分鐘檢查一次，不代表固定15分鐘傳訊。
-- 預設每日最多4次，兩次間隔150~360分鐘，00:00~08:00靜音；依執行電腦時間。
+- 預設每日最多 4 次，兩次間隔 150 至 360 分鐘，00:00 至 08:00 為靜音時段；以執行電腦的時間為準。
 - `daily_limit`、`min_interval_minutes`、`max_interval_minutes`、`quiet_hours` 是頂層設定。
 - 只以時間為話題，不讀你桌面，不猜測你在線、醒著或正在做什麼。
-- 主動自拍另需可用生圖服務、`imagegen.chance` 設0~1，以及 `scenes`，格式為 `[["場景標籤", "你自行設定的場景描述"]]`。
+- 主動自拍另需可用生圖服務，將 `imagegen.chance` 設為 0 到 1 之間的數值，並填寫 `scenes`，格式為 `[["場景標籤", "你自行設定的場景描述"]]`。
 - 預設 chance=0、scenes=[]；主動自拍另限每小時1張／每日3張。
 
 開啟代表可能在你沒發新訊息時呼叫模型、傳DM與產生費用，請明確決定後再開。
