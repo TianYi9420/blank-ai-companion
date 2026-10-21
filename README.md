@@ -27,13 +27,39 @@
 
 記憶是本機紀錄與有界上下文，不是無限長期記憶。程式不內建模型，也不提供免費或不限額服務。
 
+## 乾淨的公開檔案結構
+
+```text
+blank-ai-companion/
+  README.md                 手動安裝、配置、啟動與排錯教學
+  AGENTS.md                 通用Agent操作規約（選用）
+  HANDOFF.md                通用Agent交接指南（選用）
+  config.example.json       空白連線／功能設定
+  persona.example.json      空白人格設定
+  setup.bat / start.bat     Windows安裝與啟動
+  requirements.txt          執行依賴
+  check_config.py            本機設定檢查（不是測試套件）
+  discord_bot.py             Discord入口與權限
+  companion.py / memory.py  人格與隔離記憶
+  llm.py / imagegen.py       模型與圖片接口
+  proactive.py              主動陪伴狀態與節流
+  composer.py / sources.py  主動話題
+  research.py / bili_search.py  可選公開資料檢索
+  PRIVACY.md / SECURITY.md  隱私與安全說明
+  LICENSE / THIRD_PARTY_NOTICES.md
+  .gitignore                排除本機設定及執行產物
+```
+
+不包含測試程式、CI設定、測試報告、發布清單、打包腳本、虛擬環境或任何私人執行資料。
+安裝後才產生 `config.json`、`persona.json`、`.venv/`；使用後才產生記憶、照片、狀態與日誌，這些都不能上傳。
+
 ## Windows 快速開始
 
 ### 1. 下載與安裝
 
 1. 點 GitHub **Code → Download ZIP**，完整解壓到獨立資料夾；也可 clone 倉庫。不要在 ZIP 裡直接執行。
 2. 安裝 Python 3.10+（建議 3.13），包含 Windows `py` 啟動器。
-3. 雙擊 `setup.bat`。它會在此資料夾建立 `.venv`、連線安裝依賴、複製空白設定並顯示離線狀態；**不會啟動機器人或呼叫模型**。
+3. 雙擊 `setup.bat`。它會在此資料夾建立 `.venv`、連線安裝依賴、複製空白設定並顯示離線配置狀態；**不會啟動機器人或呼叫模型**。
 
 安裝後會有本機 `config.json`、`persona.json`；檔案存在時不覆寫。不要分享、截圖或提交這兩個檔案。
 
@@ -110,7 +136,6 @@ py -3 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 if (-not (Test-Path config.json)) { Copy-Item config.example.json config.json }
 if (-not (Test-Path persona.json)) { Copy-Item persona.example.json persona.json }
-.venv\Scripts\python.exe -m unittest test_blank -v
 .venv\Scripts\python.exe discord_bot.py --dry-run
 ```
 
@@ -174,7 +199,7 @@ if (-not (Test-Path persona.json)) { Copy-Item persona.example.json persona.json
 | 自拍失敗 | 參考圖是否存在、成人角色使用權、回環服務及edits格式／base64輸出相容性 |
 | 沒有主動訊息 | proactive.enabled、靜音、每日上限、間隔、Bot是否持續運行、能否傳DM |
 | 想清空記憶 | 先停程式，查看PRIVACY.md，備份並自行確認具體檔案；沒有一鍵自動清理 |
-| Linux／macOS無法啟動 | Windows mutex尚未移植；測試可匯入不代表跨平台可運行 |
+| Linux／macOS無法啟動 | Windows mutex尚未移植；程式可匯入不代表跨平台可運行 |
 
 ## 讓任意 AI Agent 協助
 
@@ -183,25 +208,19 @@ if (-not (Test-Path persona.json)) { Copy-Item persona.example.json persona.json
 ```text
 請先閱讀 blank-ai-companion 的 README.md、AGENTS.md 與 HANDOFF.md，協助我直接使用這個專案。
 先詢問名稱、成年角色性別／代名詞、關係、性格、外貌、語言與稱呼，不套用既有人物。
-先跑離線測試，再設定我自己的Discord Bot與模型；密鑰只寫config.json，個人人格只寫persona.json，不公開或提交。
+先檢查空白設定與程式啟動需求，再設定我自己的Discord Bot與模型；密鑰只寫config.json，個人人格只寫persona.json，不公開或提交。
 安裝套件、呼叫API、發送訊息、搜尋、生圖、主動陪伴或部署前，先說明資料外發與費用，取得我確認。
 只在這個專案修改並先備份。如果你無法讀寫檔案或執行命令，明說並給我可照做的步驟，不假裝已完成。
 ```
 
-WorkBuddy專用舊入口 [交接給WorkBuddy.md](交接給WorkBuddy.md) 保留相容，但不是必要步驟。各Agent規則載入方式隨產品／版本不同，本專案不自動替你安裝或授權它們。
+本專案不保留特定Agent的專用必讀入口；所有助手都使用同一份通用指南。各Agent規則載入方式隨產品／版本不同，本專案不自動替你安裝或授權它們。
 
-## 自動測試（可選）
-
-倉庫提供 `ci-workflow.example.yml`，可在 GitHub 網頁新增為 `.github/workflows/offline-tests.yml`，或以具工作流寫入權限的憑證提交。配置會在 Windows 測 Python 3.10／3.13，僅安裝依賴、執行離線測試與空白啟動檢查，不使用Discord／模型秘密。
-
-**初始發布因授權未含工作流寫入權限，尚未啟用 GitHub Actions，也未取得CI通過結果。** 本地離線測試已執行，不等同此矩陣已實測。新增工作流後檢查Actions結果，再聲稱CI通過；勿為此公開Token或給程式額外帳號權限。
-
-## 隱私、測試與授權
+## 隱私、限制與授權
 
 - 本機 `config.json`、`persona.json`、`anchors/`、記憶、照片、日誌、狀態與OAuth已排除版控；`.gitignore`不是安全沙箱，不要 `git add -f` 或公開已使用整目錄。
 - 使用後會持久保存新聊天與人物備忘，沒有完整「不留記憶」開關、預設加密或自動清理；不接受此行為者先不要啟動。
 - Discord及你選擇的模型／圖片／搜尋服務可能收到資料；各服務留存與費用由其決定。本專案不授予模型Shell或任意本機檔案能力，提示注入防護不保證絕對有效。
-- 離線測試使用假ID、mock模型與臨時檔案，不證明真Discord、供應商生圖或計費可用。
-- Windows是目前啟動目標；依賴只有版本範圍，更新環境後請重新測試。
-- [PRIVACY.md](PRIVACY.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 公開版只附執行檔案與必要文件，不包含測試、CI、驗收報告或打包工具。發布前的本地檢查不代表每個使用者的Discord、模型與圖片服務都可用。
+- Windows是目前啟動目標；依賴只有版本範圍，更新環境後請重新確認功能。
+- [PRIVACY.md](PRIVACY.md) · [SECURITY.md](SECURITY.md) · [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - [MIT](LICENSE) · Copyright (c) 2026 TianYi9420。軟體按原樣提供，沒有可用性或安全保證；第三方服務、素材與模型權利另計。
