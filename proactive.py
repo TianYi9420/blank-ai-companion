@@ -4,31 +4,63 @@ import random
 from datetime import datetime
 from pathlib import Path
 import companion
-ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = ROOT / "config.json"
-STATE_PATH = ROOT / "state.json"
+from runtime_paths import APP_ROOT, DATA_ROOT, data_path, reject_links
+ROOT = DATA_ROOT
+CONFIG_PATH = data_path("config.json")
+STATE_PATH = data_path("state.json")
 def load_config():
-    path = CONFIG_PATH if CONFIG_PATH.exists() else ROOT / "config.example.json"
-    return companion.runtime_config(json.loads(path.read_text(encoding="utf-8-sig")))
+    reject_links(CONFIG_PATH)
+    path = CONFIG_PATH if CONFIG_PATH.exists() else APP_ROOT / "config.example.json"
+    cfg = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(cfg, dict):
+        raise ValueError("Invalid runtime configuration")
+    return companion.runtime_config(cfg)
 def load_state():
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
+    reject_links(STATE_PATH)
+    if not STATE_PATH.exists():
         return {}
+    try:
+        value = json.loads(STATE_PATH.read_text(encoding="utf-8-sig"))
+        if not isinstance(value, dict) or "today" not in value or "today_count" not in value:
+            raise ValueError("Invalid proactive state")
+        if (not isinstance(value["today"], str) or
+                datetime.strptime(value["today"], "%Y-%m-%d").date().isoformat() != value["today"] or
+                type(value["today_count"]) is not int or not 0 <= value["today_count"] <= 1000):
+            raise ValueError("Invalid proactive state")
+        if value.get("last_fired"):
+            last = datetime.fromisoformat(value["last_fired"])
+            if last.tzinfo is not None:
+                raise ValueError("Invalid proactive timestamp")
+        if "next_gap_min" in value and (type(value["next_gap_min"]) is not int or not 15 <= value["next_gap_min"] <= 10080):
+            raise ValueError("Invalid proactive interval")
+        return value
+    except (OSError, ValueError, TypeError, OverflowError):
+        # Existing but invalid state is never treated as an unused daily budget.
+        return {"_invalid_state": True}
 def save_state(state):
+    reject_links(STATE_PATH)
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8-sig")
 def log(message):
-    folder = ROOT / "logs"
-    folder.mkdir(exist_ok=True)
+    # Diagnostics must never turn completed delivery into a retry request.
     line = f"[{datetime.now().isoformat(timespec='seconds')}] {message}"
-    print(line)
-    with (folder / f"{datetime.now().date()}.log").open("a", encoding="utf-8-sig") as stream:
-        stream.write(line + "\n")
+    try:
+        print(line)
+    except Exception:
+        pass
+    try:
+        folder = data_path("logs")
+        folder.mkdir(exist_ok=True)
+        with data_path("logs", f"{datetime.now().date()}.log").open("a", encoding="utf-8-sig") as stream:
+            stream.write(line + "\n")
+    except Exception:
+        pass
 def reset_daily(state, today):
     if state.get("today") != today:
         state.update(today=today, today_count=0)
 def should_fire(now, cfg, state):
-    if not (cfg.get("proactive") or {}).get("enabled", False):
+    if not isinstance(state, dict) or state.get("_invalid_state"):
+        return False, "invalid state"
+    if (cfg.get("proactive") or {}).get("enabled") is not True:
         return False, "disabled"
     quiet = cfg.get("quiet_hours")
     if quiet:

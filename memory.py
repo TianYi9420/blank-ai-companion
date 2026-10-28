@@ -10,8 +10,10 @@ import json
 import re
 import threading
 
-ROOT = Path(__file__).resolve().parent
-VAULT = ROOT / "companion_vault"
+from runtime_paths import DATA_ROOT, data_path, reject_links
+
+ROOT = DATA_ROOT
+VAULT = data_path("companion_vault")
 # Kept for compatibility, but never read or written by this module.
 STORE = ROOT / "memory" / "spoken.jsonl"
 LOCK = threading.RLock()
@@ -24,6 +26,7 @@ def _path(scope):
     area = "groups" if scope.startswith("guild_") else "private"
     base = VAULT.resolve()
     target = VAULT / area / (scope + ".md")
+    reject_links(target)
     if VAULT.is_symlink() or target.parent.is_symlink() or target.is_symlink():
         raise ValueError("Linked memory path rejected")
     if not target.resolve().is_relative_to(base):
@@ -48,7 +51,7 @@ def append(text, kind="", channel="local", role="assistant", *, scope="local", u
             stream.write("```json\n" + encoded + "\n```\n\n")
 
 
-def recent(n=6, *, scope="local"):
+def recent(n=6, *, scope="local", legacy_assistant_roles=()):
     path = _path(scope)
     if not path.exists():
         return []
@@ -59,13 +62,19 @@ def recent(n=6, *, scope="local"):
         stream.seek(max(0, size - 262144))
         raw = stream.read(262144).decode("utf-8", errors="replace")
     found = deque(maxlen=max(0, min(int(n), 30)))
+    legacy_roles = {r for r in legacy_assistant_roles if isinstance(r, str)
+                    and r.casefold() not in ("user", "system", "developer", "tool")}
     for line in raw.splitlines():
         if not line.startswith("{"):
             continue
         try:
             row = json.loads(line)
-            if row.get("scope") == scope and row.get("role") in ("user", "assistant") and isinstance(row.get("text"), str):
-                found.append(row)
+            if not isinstance(row, dict):
+                continue
+            if row.get("scope") == scope and isinstance(row.get("text"), str):
+                role = row.get("role")
+                if isinstance(role, str) and (role in ("user", "assistant") or role in legacy_roles):
+                    found.append({**row, "role": "user" if role == "user" else "assistant"})
         except (ValueError, TypeError):
             continue
     return list(found)
@@ -80,6 +89,7 @@ def _people_path(room):
         raise ValueError("Invalid room key")
     base = VAULT.resolve()
     target = VAULT / "people" / (room + ".md")
+    reject_links(target)
     if VAULT.is_symlink() or target.parent.is_symlink() or target.is_symlink():
         raise ValueError("Linked memory path rejected")
     if not target.resolve().is_relative_to(base):
@@ -144,7 +154,53 @@ def people_block(room, ids, *, text="", limit=6):
     return json.dumps(rows, ensure_ascii=False) if rows else ""
 
 
-def history_block(n=6, *, scope="local"):
-    rows = recent(n, scope=scope)
+def _photo_reference_path(scope):
+    checked = _path(scope)
+    target = checked.with_name(checked.stem + "_photo_refs.json")
+    reject_links(target)
+    if target.is_symlink():
+        raise ValueError("Linked reference index rejected")
+    return target
+
+
+def remember_photo_source(scope, *, channel_id, message_id, author_id, attachment_ids):
+    """只保存来源ID，不保存CDN链接、姓名、照片或识别身份。"""
+    if not isinstance(attachment_ids, (list, tuple)) or not 1 <= len(attachment_ids) <= 2:
+        raise ValueError("Invalid reference attachments")
+    values = [str(v) for v in (channel_id, message_id, author_id)]
+    ids = [str(i) for i in attachment_ids]
+    if any(not re.fullmatch(r"[1-9][0-9]{0,24}", v) for v in values + ids):
+        raise ValueError("Invalid reference IDs")
+    path = _photo_reference_path(scope)
+    row = dict(zip(("channel_id", "message_id", "author_id"), values))
+    row["attachment_ids"] = ids
+    with LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8-sig")
+
+
+def photo_source(scope):
+    path = _photo_reference_path(scope)
+    with LOCK:
+        if not path.exists():
+            return None
+        with path.open("rb") as handle:
+            raw = handle.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("Reference index too large")
+        row = json.loads(raw.decode("utf-8-sig"))
+    if not isinstance(row, dict) or set(row) != {"channel_id", "message_id", "author_id", "attachment_ids"}:
+        raise ValueError("Invalid reference index")
+    ids = row["attachment_ids"]
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 2:
+        raise ValueError("Invalid reference attachments")
+    if any(not isinstance(v, str) or not re.fullmatch(r"[1-9][0-9]{0,24}", v)
+           for v in [row["channel_id"], row["message_id"], row["author_id"]] + ids):
+        raise ValueError("Invalid reference IDs")
+    return row
+
+
+def history_block(n=6, *, scope="local", legacy_assistant_roles=()):
+    rows = recent(n, scope=scope, legacy_assistant_roles=legacy_assistant_roles)
     # Histories are quoted data, never a system instruction or a trusted identity.
     return json.dumps([{"role": r["role"], "text": r["text"][:4000]} for r in rows], ensure_ascii=False) if rows else ""

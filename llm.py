@@ -5,28 +5,20 @@ import http.client
 import ipaddress
 import json
 import logging
+import math
 import queue
-from pathlib import Path
+import re
 import socket
 import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit, urlunsplit
-
-try:
-    import yaml
-except ImportError:
-    yaml = None
+from urllib.parse import urlsplit
 
 _LOG = logging.getLogger(__name__)
 _LAST_ROUTE = contextvars.ContextVar("llm_last_route", default=None)
 _ANY_PAID = contextvars.ContextVar("llm_any_paid_used", default=False)
-_GUARD_MODEL = "intl-cli/deepseek-v4.1-flash"
-_ROUTE_SPECS = (("free_deepseek", "cpa", "companion-free/companion-free-deepseek"),
-                ("antigravity_gemini", "cpa", "gemini-4-argon-high"),
-                ("deepseek_api", "original", "deepseek-flash"))
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -56,18 +48,36 @@ def _post(cfg, path, payload, timeout):
         return json.loads(raw)
 
 
-def _bounded_post(settings, path, payload, timeout):
-    """链路专用传输：固定目标、无代理/跳转/重试，整次调用有硬截止。"""
-    endpoint = urlsplit(settings["endpoint"])
-    host = endpoint.hostname
-    local = settings["_route_transport"] == "cpa"
-    if local:
-        if endpoint.scheme not in ("http", "https") or not ipaddress.ip_address(host).is_loopback:
-            raise ValueError("Invalid local endpoint")
-    elif endpoint.scheme != "https" or host != "api.deepseek.com" or endpoint.port not in (None, 443):
-        raise ValueError("Invalid original endpoint")
-    if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment or not endpoint.path.endswith("/chat/completions"):
+def _endpoint(value):
+    if (not isinstance(value, str) or not value or len(value) > 2048
+            or any(c.isspace() or ord(c) < 33 or ord(c) == 127 for c in value) or "\\" in value):
         raise ValueError("Invalid route endpoint")
+    endpoint = urlsplit(value)
+    host = endpoint.hostname
+    if (endpoint.scheme not in ("http", "https") or not host or endpoint.username is not None
+            or endpoint.password is not None or endpoint.query or endpoint.fragment
+            or "?" in value or "#" in value or not endpoint.path.endswith("/chat/completions")
+            or endpoint.port is not None and not 1 <= endpoint.port <= 65535):
+        raise ValueError("Invalid route endpoint")
+    host = "127.0.0.1" if host == "localhost" else host
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        local = False
+    else:
+        local = address.is_loopback
+        if not local and not address.is_global:
+            raise ValueError("Invalid route endpoint")
+    if not local and endpoint.scheme != "https":
+        raise ValueError("Invalid route endpoint")
+    return endpoint, host, local
+
+
+def _bounded_post(settings, path, payload, timeout):
+    """链路专用传输：显式目标、无代理/跳转/重试，整次调用有硬截止。"""
+    if settings.get("_route_transport") != "explicit":
+        raise ValueError("Unsupported route transport")
+    endpoint, host, local = _endpoint(settings["endpoint"])
     deadline = time.monotonic() + float(timeout)
 
     def remaining():
@@ -105,9 +115,10 @@ def _bounded_post(settings, path, payload, timeout):
             guard.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
-    watchdog = threading.Timer(remaining(), abort)
-    watchdog.daemon = True
+    watchdog = None
     try:
+        watchdog = threading.Timer(remaining(), abort)
+        watchdog.daemon = True
         watchdog.start()
         if endpoint.scheme == "https":
             connection = http.client.HTTPSConnection(host, port, timeout=remaining(), context=ssl.create_default_context())
@@ -151,8 +162,10 @@ def _bounded_post(settings, path, payload, timeout):
             raise TimeoutError("deadline") from None
         raise
     finally:
-        watchdog.cancel()
-        watchdog.join()
+        if watchdog is not None:
+            watchdog.cancel()
+            if watchdog.ident is not None:
+                watchdog.join()
         guard.close()
         if connection is not None:
             connection.close()
@@ -182,100 +195,96 @@ def get_last_route():
     return state
 
 
-def _record(name, success, reason):
+def _record(name, success, reason, elapsed=0.0, *, paid=False):
     state = get_last_route() or {"name": None, "success": False, "paid_fallback": False, "attempts": []}
-    state["attempts"].append({"name": name, "success": success, "fail_reason": reason})
-    state.update(name=name, success=success, paid_fallback=name == "deepseek_api")
+    elapsed_ms = round(max(0.0, elapsed) * 1000, 3)
+    state["attempts"].append({"name": name, "success": success, "fail_reason": reason, "elapsed_ms": elapsed_ms})
+    state.update(name=name, success=success, paid_fallback=paid)
     _LAST_ROUTE.set(state)
-    _LOG.info("model_route name=%s success=%s fail_reason=%s", name, success, reason)
+    _LOG.info("model_route status=%s elapsed_ms=%s", reason, elapsed_ms)
 
 
-def _cpa_settings(settings):
-    if yaml is None:
-        raise ValueError("CPA parser unavailable")
-    path = Path(settings.get("cpa_config_path") or "")
-    if not path.is_absolute():
-        raise ValueError("CPA path must be absolute")
-    with path.open("rb") as handle:
-        raw = handle.read(1024 * 1024 + 1)
-    if len(raw) > 1024 * 1024:
-        raise ValueError("CPA settings too large")
-    doc = yaml.safe_load(raw)
-    server, access = doc["server"], doc["access"]
-    host, port = server["host"], server["port"]
-    if host == "localhost":
-        host = "127.0.0.1"
-    if not isinstance(host, str) or not ipaddress.ip_address(host).is_loopback or type(port) is not int or not 1 <= port <= 65535:
-        raise ValueError("CPA must use loopback")
-    keys = access["api-keys"]
-    if not isinstance(keys, list) or not keys or not isinstance(keys[0], str) or not keys[0].strip() or any(ord(c) < 32 or ord(c) == 127 for c in keys[0]):
-        raise ValueError("CPA credential unavailable")
-    scheme = "https" if server.get("tls", {}).get("enable") is True else "http"
-    authority = "[" + host + "]" if ":" in host else host
-    return {"endpoint": scheme + "://" + authority + ":" + str(port) + "/v1/chat/completions",
-            "api_token": keys[0], "_route_transport": "cpa", "enabled": True}
+def _number(value, low, high, *, integer=False):
+    if (type(value) not in ((int,) if integer else (int, float)) or not math.isfinite(value)
+            or not low <= value <= high):
+        raise ValueError("Invalid chain number")
+    return value
 
 
-def _guard_settings(settings, route):
-    """只读取固定模型条目，本地证明请求不得复用CPA或官方凭证。"""
-    if route.get("guard_model_id") != _GUARD_MODEL:
-        raise ValueError("Unsupported guard model")
-    path = Path(settings.get("workbuddy_models_path") or "")
-    if not path.is_absolute():
-        raise ValueError("Guard path must be absolute")
-    with path.open("rb") as handle:
-        raw = handle.read(1024 * 1024 + 1)
-    if len(raw) > 1024 * 1024:
-        raise ValueError("Guard settings too large")
-    doc = json.loads(raw.decode("utf-8-sig"))
-    rows = doc.get("models") if isinstance(doc, dict) else doc
-    if not isinstance(rows, list):
-        raise ValueError("Invalid guard settings")
-    matches = [row for row in rows if isinstance(row, dict) and row.get("id") == _GUARD_MODEL]
-    if len(matches) != 1:
-        raise ValueError("Guard model unavailable")
-    entry = matches[0]
-    endpoint = entry.get("url")
-    if not isinstance(endpoint, str) or any(ord(c) < 33 or ord(c) == 127 for c in endpoint) or "\\" in endpoint:
-        raise ValueError("Invalid guard endpoint")
-    parsed = urlsplit(endpoint)
-    if parsed.scheme not in ("http", "https") or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path != "/v1/chat/completions":
-        raise ValueError("Invalid guard endpoint")
-    host = parsed.hostname
-    if host == "localhost":
-        host = "127.0.0.1"
-    if not ipaddress.ip_address(host).is_loopback or parsed.port is not None and not 1 <= parsed.port <= 65535:
-        raise ValueError("Guard must use loopback")
-    authority = "[" + host + "]" if ":" in host else host
-    if parsed.port is not None:
-        authority += ":" + str(parsed.port)
-    token = entry.get("apiKey") or ""
-    if not isinstance(token, str) or any(ord(c) < 32 or ord(c) == 127 for c in token):
-        raise ValueError("Invalid guard credential")
-    return {"endpoint": urlunsplit((parsed.scheme, authority, parsed.path, "", "")),
-            "api_token": token, "_route_transport": "cpa"}
+def _model(value, *, empty=False):
+    if (not isinstance(value, str) or len(value) > 256 or (not empty and not value)
+            or value != value.strip() or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+        raise ValueError("Invalid route model")
+    return value
 
 
 def _routes(settings):
+    """发送前验证整条链；不读取其他应用设置，不修补旧协议。"""
     configured = settings.get("route_chain")
-    if not isinstance(configured, list):
-        return
-    for name, source, model in _ROUTE_SPECS:
-        matches = [item for item in configured if isinstance(item, dict) and item.get("name") == name]
-        if len(matches) != 1:
-            continue
-        item = matches[0]
-        if name == "free_deepseek" and item.get("source") == "workbuddy":
-            # Operator opt-in only: normal custom route is usable, not proven free.
-            if item.get("model") != _GUARD_MODEL or item.get("accept_unverified_billing") is not True:
-                _record(name, False, "invalid_route")
-                continue
-            yield name, "workbuddy", _GUARD_MODEL, item
-            continue
-        if item.get("source") != source or item.get("model", model) != model:
-            _record(name, False, "invalid_route")
-            continue
-        yield name, source, model, item
+    if not isinstance(configured, list) or len(configured) > 8:
+        raise ValueError("Invalid route chain")
+    deadline = _number(settings.get("chain_deadline_seconds", 120), 1, 450)
+    _number(settings.get("retry_backoff_seconds", 2), 0, 30)
+    if type(settings.get("allow_paid_fallback", False)) is not bool:
+        raise ValueError("Invalid paid opt-in")
+    if "vision_model" in settings:
+        _model(settings["vision_model"], empty=True)
+    required = {"id", "endpoint", "model", "api_token", "enabled", "timeout_seconds", "attempts", "reserve_seconds", "paid"}
+    optional = {"vision_model", "supports_images"}
+    ids, routes = set(), []
+    for index, item in enumerate(configured):
+        if not isinstance(item, dict) or not required <= item.keys() or item.keys() - required - optional:
+            raise ValueError("Unsupported route schema")
+        route_id = item["id"]
+        if (not isinstance(route_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", route_id) is None
+                or route_id in ids):
+            raise ValueError("Invalid route order")
+        ids.add(route_id)
+        for flag in ("enabled", "paid", "supports_images"):
+            if flag in item and type(item[flag]) is not bool:
+                raise ValueError("Invalid route flag")
+        _endpoint(item["endpoint"])
+        _model(item["model"])
+        if "vision_model" in item:
+            _model(item["vision_model"], empty=True)
+        token = item["api_token"]
+        if (not isinstance(token, str) or len(token) > 8192
+                or any(ord(c) < 32 or ord(c) > 126 for c in token)):
+            raise ValueError("Invalid route credential")
+        _number(item["timeout_seconds"], 0.1, min(120, deadline))
+        _number(item["attempts"], 1, 5, integer=True)
+        _number(item["reserve_seconds"], 0, min(item["timeout_seconds"], deadline))
+        if item.get("supports_images", False):
+            if not item.get("vision_model"):
+                raise ValueError("Missing explicit vision model")
+        routes.append(("route_" + str(index + 1), dict(item)))
+    if sum(item["reserve_seconds"] for _, item in routes if item["enabled"]) >= deadline:
+        raise ValueError("Invalid reserved budget")
+    return routes
+
+
+def validate_chain_config(cfg):
+    """仅做本地验证；错误不包含配置值、路径、凭证或上游内容。"""
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("llm", {}), dict):
+        return ["llm 配置必须为对象"]
+    settings = cfg.get("llm", {})
+    if "route_chain" not in settings:
+        return []
+    if "enabled" in settings and type(settings["enabled"]) is not bool:
+        return ["llm.enabled 必须为布尔值"]
+    try:
+        routes = _routes(settings)
+    except (ValueError, TypeError, OverflowError):
+        return ["llm.route_chain 配置无效或不受支持"]
+    if routes and not any(item["enabled"] and (not item["paid"] or settings.get("allow_paid_fallback") is True)
+                          for _, item in routes):
+        return ["llm.route_chain 没有已启用且获授权的路由"]
+    return []
+
+
+def _chain_selected(settings):
+    # 空列表是禁用链；错误类型仍走链以拒绝调用，不能悄悄退回单端点。
+    return "route_chain" in settings and settings["route_chain"] != []
 
 
 def _response_text(body):
@@ -286,7 +295,9 @@ def _response_text(body):
     if body.get("error"):
         error = body["error"]
         code = error.get("code") if isinstance(error, dict) else None
-        if code in (401, 429, "401", "429", "server_error", "service_unavailable", "rate_limit_exceeded", "invalid_api_key"):
+        if (code in (401, 408, 429, "401", "408", "429", "server_error", "service_unavailable", "rate_limit_exceeded", "invalid_api_key")
+                or type(code) is int and 500 <= code <= 599
+                or isinstance(code, str) and code.isdigit() and len(code) == 3 and 500 <= int(code) <= 599):
             return None, "service_unavailable", False
         return None, "rejected_request", True
     choices = body.get("choices")
@@ -315,101 +326,87 @@ def _response_text(body):
 def _chain(cfg, payload, max_chars, *, images=False, probe=False):
     settings = cfg.get("llm") or {}
     _LAST_ROUTE.set(None)
-    if not settings.get("enabled"):
-        return False if probe else None
-    deadline = time.monotonic() + _limit(settings.get("chain_deadline_seconds"), 120, 1, 120)
-    cpa = None
-    for name, source, model, item in _routes(settings):
-        if item.get("enabled", True) is not True:
+    empty = False if probe else None
+    if settings.get("enabled") is not True:
+        return empty
+    try:
+        routes = _routes(settings)
+    except (ValueError, TypeError, OverflowError):
+        _record(None, False, "invalid_config")
+        return empty
+    deadline = time.monotonic() + settings.get("chain_deadline_seconds", 120)
+    eligible = []
+    for name, item in routes:
+        if not item["enabled"]:
             _record(name, False, "disabled")
-            continue
-        if images and item.get("supports_images") is not True:
+        elif item["paid"] and settings.get("allow_paid_fallback") is not True:
+            _record(name, False, "paid_not_allowed")
+        elif images and (not item.get("supports_images") or not item.get("vision_model")):
             _record(name, False, "images_unsupported")
-            continue
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            _record(name, False, "deadline")
-            break
-        timeout = min(remaining, _limit(item.get("timeout_seconds", settings.get("timeout_seconds")), 35, 20, 45))
-        try:
-            if source == "workbuddy":
-                route_cfg = {"llm": _guard_settings(settings, item)}
-            elif source == "cpa":
-                if cpa is None:
-                    cpa = _cpa_settings(settings)
-                route_cfg = {"llm": dict(cpa)}
-            else:
-                if not official(cfg):
-                    _record(name, False, "invalid_original_endpoint")
-                    continue
-                route_cfg = {"llm": {"endpoint": settings.get("endpoint"), "api_token": settings.get("api_token"), "_route_transport": "original"}}
-        except Exception:
-            _record(name, False, "local_config_unavailable")
-            continue
-        if name == "free_deepseek" and source == "cpa":
-            try:
-                guard_cfg = {"llm": _guard_settings(settings, item)}
-                guard_budget = deadline - time.monotonic()
-                if guard_budget <= 0:
-                    _record(name, False, "deadline")
-                    break
-                proof = _post(guard_cfg, "/models", None, min(10, guard_budget))
-                verified = proof.get("companion_strict_free_models") if isinstance(proof, dict) else None
-                if not isinstance(proof, dict) or type(proof.get("companion_strict_free_version")) is not int or proof["companion_strict_free_version"] != 1 or not isinstance(verified, list) or _GUARD_MODEL not in verified:
-                    _record(name, False, "capability_unavailable")
-                    continue
-            except Exception:
-                _record(name, False, "capability_unavailable")
-                continue
-        try:
-            # 原代理严格证明和CPA精确别名缺一不可，旧代理不允许生成。
-            if (name == "free_deepseek" and source == "cpa") or probe:
-                catalog_budget = deadline - time.monotonic()
-                if catalog_budget <= 0:
-                    _record(name, False, "deadline")
-                    break
-                catalog = _post(route_cfg, "/models", None, min(timeout, 10, catalog_budget))
-                records = catalog.get("data", []) if isinstance(catalog, dict) else []
-                accepted_ids = {model}
-                if source == "workbuddy":
-                    accepted_ids.add(_GUARD_MODEL.split("/", 1)[1])
-                found = [row for row in records if isinstance(row, dict) and row.get("id") in accepted_ids] if isinstance(records, list) else []
-                if not found:
-                    _record(name, False, "capability_unavailable")
-                    continue
-                if probe:
-                    _record(name, True, "ok")
-                    return True
-            remaining = deadline - time.monotonic()
+        else:
+            eligible.append((name, item))
+    for index, (name, item) in enumerate(eligible):
+        reserve = sum(later["reserve_seconds"] for _, later in eligible[index + 1:])
+        route_deadline = deadline - reserve
+        route_cfg = {"llm": {"endpoint": item["endpoint"], "api_token": item["api_token"], "_route_transport": "explicit"}}
+        route_payload = copy.deepcopy(payload)
+        route_payload["model"] = item["vision_model"] if images else item["model"]
+        for attempt in range(item["attempts"]):
+            remaining = route_deadline - time.monotonic()
             if remaining <= 0:
-                _record(name, False, "deadline")
+                _record(name, False, "reserved_budget" if reserve else "deadline")
                 break
-            route_payload = copy.deepcopy(payload)
-            route_payload["model"] = model
-            if source == "original":
-                route_payload["thinking"] = {"type": "disabled"}
-                _ANY_PAID.set(True)
-            body = _post(route_cfg, "/chat/completions", route_payload, min(timeout, remaining))
-            if time.monotonic() > deadline:
-                _record(name, False, "deadline")
-                break
-            text, reason, terminal = _response_text(body)
-            _record(name, bool(text) and reason == "ok", reason)
+            started = time.monotonic()
+            retry = True
+            terminal = False
+            text = None
+            try:
+                if item["paid"]:
+                    _ANY_PAID.set(True)
+                body = _post(route_cfg, "/models" if probe else "/chat/completions",
+                             None if probe else route_payload, min(item["timeout_seconds"], remaining))
+                if probe:
+                    records = body.get("data") if isinstance(body, dict) else None
+                    success = isinstance(records, list) and any(isinstance(row, dict) and row.get("id") == item["model"] for row in records)
+                    reason = "ok" if success else "capability_unavailable"
+                    retry = False
+                else:
+                    text, reason, terminal = _response_text(body)
+                    success = bool(text) and reason == "ok"
+                    error = body.get("error") if isinstance(body, dict) else None
+                    code = error.get("code") if isinstance(error, dict) else None
+                    retry = reason in ("empty_content", "service_unavailable") and code not in (401, "401", "invalid_api_key")
+            except urllib.error.HTTPError as error:
+                success = False
+                retry = error.code in (408, 429) or 500 <= error.code <= 599
+                terminal = not retry and error.code != 401
+                reason = "http_unavailable" if retry or error.code == 401 else "http_rejected"
+            except (TimeoutError, socket.timeout):
+                success, reason = False, "timeout"
+            except (OSError, http.client.HTTPException):
+                success, reason = False, "service_unavailable"
+            except Exception:
+                success, reason, terminal = False, "invalid_response", True
+            now = time.monotonic()
+            if now >= route_deadline:
+                # 即便超时传输返回正文，安全拒绝也必须终止而非换供应商。
+                if terminal:
+                    _record(name, False, reason, now - started, paid=item["paid"])
+                    return empty
+                success, text, reason, retry = False, None, "deadline", False
+            _record(name, success, reason, now - started, paid=item["paid"])
+            if probe and success:
+                return True
             if text or terminal:
-                return text[:max_chars] if text else None
-        except urllib.error.HTTPError as error:
-            retryable = error.code in (401, 408, 429) or 500 <= error.code <= 599
-            _record(name, False, "http_unavailable" if retryable else "http_rejected")
-            if not retryable:
+                return text[:max_chars] if text else empty
+            if not retry or attempt + 1 == item["attempts"]:
                 break
-        except (TimeoutError, socket.timeout):
-            _record(name, False, "timeout")
-        except (OSError, http.client.HTTPException):
-            _record(name, False, "service_unavailable")
-        except Exception:
-            _record(name, False, "invalid_response")
-            break
-    return False if probe else None
+            pause = min(settings.get("retry_backoff_seconds", 2) * 2 ** attempt, 30)
+            if route_deadline - time.monotonic() <= pause:
+                break
+            if pause:
+                time.sleep(pause)
+    return empty
 
 
 def official(cfg):
@@ -417,9 +414,9 @@ def official(cfg):
 
 
 def available(cfg):
-    if "route_chain" in (cfg.get("llm") or {}):
+    if _chain_selected(cfg.get("llm") or {}):
         return _chain(cfg, {}, 1, probe=True)
-    if not (cfg.get("llm") or {}).get("enabled"):
+    if (cfg.get("llm") or {}).get("enabled") is not True or not (cfg.get("llm") or {}).get("endpoint"):
         return False
     try:
         return bool(_post(cfg, "/models", None, 10).get("data"))
@@ -430,18 +427,18 @@ def available(cfg):
 def generate(cfg, system, user, *, max_chars=400, max_tokens=None, model=None):
     _LAST_ROUTE.set(None)
     settings = cfg.get("llm") or {}
-    if not settings.get("enabled"):
+    if settings.get("enabled") is not True:
         return None
-    if "route_chain" in settings:
+    if _chain_selected(settings):
         payload = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                    "temperature": 0.8,
                    "max_tokens": min(_limit(max_tokens, 4000, 1, 4000) if max_tokens is not None else 4000,
                                      _limit(settings.get("max_tokens"), 2000, 1, 4000))}
         return _chain(cfg, payload, _limit(max_chars, 400, 1, 12000))
+    if not settings.get("endpoint") or not (model or settings.get("model")):
+        return None
     _LAST_ROUTE.set(None)
-    chosen = model or settings.get("model", "deepseek-flash")
-    if official(cfg) and chosen in ("deepseek-chat", "deepseek-reasoner"):
-        chosen = "deepseek-flash"
+    chosen = model or settings["model"]
     payload = {"model": chosen, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                "temperature": 0.8, "max_tokens": min(int(max_tokens or settings.get("max_tokens", 2000)), 4000)}
     if official(cfg):
@@ -457,8 +454,8 @@ def generate(cfg, system, user, *, max_chars=400, max_tokens=None, model=None):
 def analyze_images(cfg, prompt, images_dataurls):
     _LAST_ROUTE.set(None)
     settings = cfg.get("llm") or {}
-    chained = "route_chain" in settings
-    if not settings.get("enabled") or (not chained and not settings.get("vision_model")):
+    chained = _chain_selected(settings)
+    if settings.get("enabled") is not True or not settings.get("vision_model") or (not chained and not settings.get("endpoint")):
         return None
     images = [x for x in images_dataurls[:2] if isinstance(x, str) and x.startswith("data:image/") and len(x) <= 8000000]
     if not images:
