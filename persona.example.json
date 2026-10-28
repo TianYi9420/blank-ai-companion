@@ -5,5 +5,7 @@
   "appearance": "",
   "personality": "",
   "language": "",
-  "owner_nickname": ""
+  "owner_nickname": "",
+  "aliases": [],
+  "legacy_assistant_roles": []
 }

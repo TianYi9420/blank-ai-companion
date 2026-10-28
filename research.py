@@ -485,7 +485,7 @@ def answer(cfg: dict, question: str, *, attachments: list[dict] | None = None,
     notes = result["notes"]
     budget = budget if isinstance(budget, dict) else {}
     options = cfg.get("research") or {}
-    if not (cfg.get("llm") or {}).get("enabled"):
+    if (cfg.get("llm") or {}).get("enabled") is not True:
         notes.append("模型功能未啟用，未分析或檢索。")
         return result
     input_limit = _limit(budget.get("max_input_chars"), MAX_INPUT, 1, MAX_INPUT)
@@ -525,7 +525,7 @@ def answer(cfg: dict, question: str, *, attachments: list[dict] | None = None,
                 notes.append("附件圖片辨識失敗，未推測圖片內容。")
     elif attachments:
         notes.append("未設定圖片理解模型或預算禁止識圖，附件未送往模型。")
-    if not options.get("enabled", False):
+    if options.get("enabled") is not True:
         notes.append("公開搜尋未啟用，未向搜尋服務送出查詢。")
         return result
     # 单纯看图不额外触发付费搜索；图片观察不是外部查证。
@@ -554,8 +554,8 @@ def answer(cfg: dict, question: str, *, attachments: list[dict] | None = None,
     if provider != "deepseek_web_search":
         notes.append("未知的研究服務，未檢索。")
         return result
-    if "route_chain" in (cfg.get("llm") or {}):
-        notes.append("模型回退鏈啟用時不直連付費伺服端工具搜尋，避免繞過免費→Gemini→DeepSeek API順序；請使用公開摘要研究模式。")
+    if llm._chain_selected(cfg.get("llm") or {}):
+        notes.append("模型回退鏈啟用或配置無效時不直連伺服端工具搜尋，避免繞過明確授權的路由；請使用公開摘要研究模式。")
         return result
     notes.append("已明確選用伺服端工具搜尋；服務可能多次呼叫工具，無法保證精確費用上限。")
     endpoint = (cfg.get("llm") or {}).get("endpoint") or ""
